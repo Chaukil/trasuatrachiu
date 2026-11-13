@@ -1,0 +1,22 @@
+// Add inside match /databases/{database}/documents { ... }.
+// Only the current admin can change the voucher for the active, open round.
+// Keep other scoped rules. Broad allow write: if true bypasses this check.
+
+match /orders/{orderId} {
+  allow update: if request.auth != null
+    && get(/databases/$(database)/documents/app/state).data.adminUid == request.auth.uid
+    && get(/databases/$(database)/documents/app/state).data.activeOrderId == orderId
+    && resource.data.open == true
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voucher'])
+    && (request.resource.data.voucher == null
+      || (request.resource.data.voucher is map
+        && request.resource.data.voucher.keys().hasAll(['type', 'value'])
+        && request.resource.data.voucher.keys().hasOnly(['type', 'value'])
+        && request.resource.data.voucher.value is number
+        && request.resource.data.voucher.value > 0
+        && ((request.resource.data.voucher.type == 'percent'
+            && request.resource.data.voucher.value <= 100)
+          || (request.resource.data.voucher.type == 'amount'
+            && request.resource.data.voucher.value is int
+            && request.resource.data.voucher.value <= 10000000000))));
+}

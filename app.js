@@ -41,12 +41,22 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
     let signInStarted = false;
     let selectedShopId = "";
     let editorShopId = null;
-    let chosenItemId = "";
+    const orderCart = new Map();
+    let orderSubmitting = false;
+    const MAX_ORDER_QUANTITY = 50;
     const bulkDrafts = new Map();
     let bulkSaving = false;
     const cancellingEntries = new Set();
     let captureRendererPromise;
     let summaryCapturing = false;
+    let voucherDraftKey = "";
+    let voucherSaving = false;
+    let voucherExpanded = false;
+    let voucherRoundId = null;
+    let paymentDraftKey = "";
+    let paymentImage = "";
+    let paymentSaving = false;
+    let paymentLoading = false;
     let toastTimer;
     try { $("name-input").value = localStorage.getItem("drink-order-name") || ""; } catch {}
     $("save-name").addEventListener("click", () => {
@@ -146,7 +156,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
     function setOrderListeners(orderId) {
       if (activeOrderId === orderId) return;
       activeOrderId = orderId;
-      chosenItemId = "";
+      orderCart.clear();
       activeOrder = null;
       entries = [];
       activeOrderUnsubscribe?.();
@@ -421,23 +431,66 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
         area.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">Menu đang trống</div><div class="empty-copy">Admin cần thêm món vào menu trước khi mọi người đặt.</div></div>`;
         return;
       }
-      if (!menu.some(item => item.id === chosenItemId)) chosenItemId = "";
+      for (const id of orderCart.keys()) if (!menu.some(item => item.id === id)) orderCart.delete(id);
       area.innerHTML = `<div class="menu-sheet"><div class="menu-masthead"><div><span class="eyebrow">THỰC ĐƠN HÔM NAY</span><h3>${escapeHtml(activeOrder.shopName || "Menu của quán")}</h3></div><span class="menu-stamp" aria-hidden="true">🍵</span></div><p class="menu-help">Chạm vào món bạn thích · Giá tính bằng đồng</p>
-        <div class="menu-columns">${groupMenu(menu).map(([category, items]) => `<section class="menu-category"><div class="category-heading"><h4>${escapeHtml(category)}</h4><span aria-hidden="true">${categoryIcon(category)}</span></div><div class="menu-items">${items.map(item => `<label class="menu-item"><input type="radio" name="menu-item" value="${escapeHtml(item.id)}" ${chosenItemId === item.id ? "checked" : ""}><span class="menu-item-name">${escapeHtml(item.name)}${item.size ? `<small>Size ${escapeHtml(item.size)}</small>` : ""}</span><span class="menu-item-price">${money(item.price)}</span><span class="menu-item-check" aria-hidden="true">＋</span></label>`).join("")}</div></section>`).join("")}</div></div>
-        <div class="order-composer"><div id="selected-drink" class="selected-drink" aria-live="polite">${chosenItemId ? escapeHtml(label(menu.find(item => item.id === chosenItemId))) : "Chọn một món trên menu để đặt nhé"}</div><div class="field"><label for="order-note">Ghi chú món <span class="optional">(nếu có)</span></label><input id="order-note" class="control" maxlength="300" placeholder="Ít đá, 50% đường…"></div><button class="primary full order-submit" id="submit-order" type="button" ${chosenItemId ? "" : "disabled"}>＋ Thêm vào đơn</button></div>`;
+        <div class="menu-columns">${groupMenu(menu).map(([category, items]) => `<section class="menu-category"><div class="category-heading"><h4>${escapeHtml(category)}</h4><span aria-hidden="true">${categoryIcon(category)}</span></div><div class="menu-items">${items.map(item => `<label class="menu-item"><input type="checkbox" name="menu-item" value="${escapeHtml(item.id)}" ${orderCart.has(item.id) ? "checked" : ""} ${orderSubmitting ? "disabled" : ""}><span class="menu-item-name">${escapeHtml(item.name)}${item.size ? `<small>Size ${escapeHtml(item.size)}</small>` : ""}</span><span class="menu-item-price">${money(item.price)}</span><span class="menu-item-check" aria-hidden="true">${orderCart.has(item.id) ? "✓" : "＋"}</span></label>`).join("")}</div></section>`).join("")}</div></div>
+        <div id="order-composer" class="order-composer"></div>`;
       area.querySelectorAll('input[name="menu-item"]').forEach(input => input.addEventListener("change", () => {
-        chosenItemId = input.value;
-        $("selected-drink").textContent = label(menu.find(item => item.id === chosenItemId));
-        $("submit-order").disabled = false;
+        if (input.checked) {
+          if (cartQuantity() >= MAX_ORDER_QUANTITY) { input.checked = false; return showToast("Mỗi lần thêm tối đa 50 món. Bạn có thể đặt tiếp sau đó.", true); }
+          orderCart.set(input.value, { quantity: 1, note: "" });
+        } else orderCart.delete(input.value);
+        input.closest("label").querySelector(".menu-item-check").textContent = input.checked ? "✓" : "＋";
+        renderOrderComposer(menu);
+      }));
+      renderOrderComposer(menu);
+    }
+
+    function cartQuantity() {
+      return [...orderCart.values()].reduce((sum, item) => sum + item.quantity, 0);
+    }
+
+    function renderOrderComposer(menu = normalizeMenu(activeOrder?.menu)) {
+      const selected = menu.filter(item => orderCart.has(item.id));
+      const quantity = cartQuantity();
+      const total = selected.reduce((sum, item) => sum + (item.price || 0) * orderCart.get(item.id).quantity, 0);
+      $("order-composer").innerHTML = `<div class="cart-heading"><strong>Món bạn chọn</strong><span>${selected.length} loại · ${quantity} món</span></div>${selected.length ? `<div class="cart-lines">${selected.map(item => {
+        const draft = orderCart.get(item.id);
+        return `<div class="cart-line"><div class="cart-item-heading"><strong>${escapeHtml(item.name)}${item.size ? ` · Size ${escapeHtml(item.size)}` : ""}</strong><span>${money(item.price == null ? null : item.price * draft.quantity)}</span></div><div class="cart-item-options"><div class="quantity-stepper"><button type="button" data-quantity-delta="-1" data-item-id="${escapeHtml(item.id)}" aria-label="Giảm số lượng ${escapeHtml(item.name)}" ${orderSubmitting ? "disabled" : ""}>−</button><input class="cart-quantity" data-item-id="${escapeHtml(item.id)}" type="number" min="1" max="50" step="1" value="${draft.quantity}" aria-label="Số lượng ${escapeHtml(item.name)}" ${orderSubmitting ? "disabled" : ""}><button type="button" data-quantity-delta="1" data-item-id="${escapeHtml(item.id)}" aria-label="Tăng số lượng ${escapeHtml(item.name)}" ${orderSubmitting || quantity >= MAX_ORDER_QUANTITY ? "disabled" : ""}>＋</button></div><button class="text-button cart-remove" type="button" data-item-id="${escapeHtml(item.id)}" ${orderSubmitting ? "disabled" : ""}>Bỏ chọn</button></div><input class="control cart-note" data-item-id="${escapeHtml(item.id)}" maxlength="300" value="${escapeHtml(draft.note)}" placeholder="Ghi chú cho món này: ít đá, ít đường…" aria-label="Ghi chú ${escapeHtml(item.name)}" ${orderSubmitting ? "disabled" : ""}><small>Ghi chú áp dụng cho cả ${draft.quantity} phần món này.</small></div>`;
+      }).join("")}</div><div class="cart-total" aria-live="polite"><span>Tạm tính${selected.some(item => item.price == null) ? " (chưa gồm món chưa có giá)" : ""}</span><strong>${money(total)}</strong></div><p class="card-subtitle">Giá trước voucher · Tối đa 50 món mỗi lần thêm.</p>` : '<p class="card-subtitle">Chọn một hoặc nhiều món trên menu, sau đó chỉnh số lượng và ghi chú.</p>'}<button class="primary full order-submit" id="submit-order" type="button" ${!quantity || orderSubmitting ? "disabled" : ""}>${orderSubmitting ? "Đang thêm…" : `＋ Thêm ${quantity || "món"}${quantity ? " món" : ""} vào đơn`}</button>`;
+      $("order-composer").querySelectorAll("[data-quantity-delta]").forEach(button => button.addEventListener("click", () => {
+        const draft = orderCart.get(button.dataset.itemId);
+        changeCartQuantity(button.dataset.itemId, draft.quantity + Number(button.dataset.quantityDelta));
+      }));
+      $("order-composer").querySelectorAll(".cart-quantity").forEach(input => input.addEventListener("change", () => changeCartQuantity(input.dataset.itemId, Number(input.value))));
+      $("order-composer").querySelectorAll(".cart-remove").forEach(button => button.addEventListener("click", () => changeCartQuantity(button.dataset.itemId, 0)));
+      $("order-composer").querySelectorAll(".cart-note").forEach(input => input.addEventListener("input", () => {
+        const draft = orderCart.get(input.dataset.itemId);
+        if (draft) draft.note = input.value;
       }));
       $("submit-order").addEventListener("click", submitOrder);
     }
 
+    function changeCartQuantity(id, quantity) {
+      if (orderSubmitting || !orderCart.has(id)) return;
+      const current = orderCart.get(id);
+      if (!Number.isInteger(quantity) || quantity < 0 || cartQuantity() - current.quantity + quantity > MAX_ORDER_QUANTITY) {
+        showToast("Số lượng phải là số nguyên, tổng tối đa 50 món mỗi lần thêm.", true);
+        renderOrderComposer();
+        return;
+      }
+      if (!quantity) { orderCart.delete(id); renderOrderForm(); }
+      else { current.quantity = quantity; renderOrderComposer(); }
+    }
+
     function renderEntries() {
+      renderVoucherForm();
+      renderPaymentForm();
       $("close-order").hidden = !(currentUser && appState?.adminUid === currentUser.uid && activeOrder?.open);
       $("entry-count").textContent = `${entries.length} món đã đặt`;
       $("entries-total").hidden = !activeOrder || !entries.length;
-      $("entries-total").innerHTML = `<div><span>Tổng tiền</span>${entries.some(item => item.price == null) ? '<small>Chưa gồm món chưa có giá</small>' : ""}</div><strong>${money(entries.reduce((sum, item) => sum + (item.price || 0), 0))}</strong>`;
+      const bill = calculateVoucher(entries, activeOrder?.voucher);
+      $("entries-total").innerHTML = `<div><span>${bill.discount ? "Cần thanh toán" : "Tổng tiền"}</span>${bill.discount ? `<small>Tiền món ${money(bill.total)} · Voucher −${money(bill.discount)}</small>` : ""}${bill.unknown ? '<small>Chưa gồm món chưa có giá; voucher chỉ áp dụng khi đủ giá.</small>' : ""}</div><strong>${money(bill.net)}</strong>`;
       $("summary-button").disabled = !activeOrder || entries.length === 0;
       if (!activeOrder || entries.length === 0) {
         $("entries-area").innerHTML = `<div class="empty-state"><div class="empty-icon">🥤</div><div class="empty-title">Chưa có món nào</div><div class="empty-copy">Hãy là người đầu tiên chọn món nhé!</div></div>`;
@@ -447,6 +500,194 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
         <div class="entry"><div><div class="entry-name">${escapeHtml(entry.name)}</div><div class="entry-drink">${escapeHtml(entry.drink)}${entry.size ? ` · Size ${escapeHtml(entry.size)}` : ""}</div><div class="price-badge">${money(entry.price)}</div>${entry.note ? `<div class="card-subtitle">Ghi chú: ${escapeHtml(entry.note)}</div>` : ""}</div><div class="entry-controls"><span class="entry-no">#${String(index + 1).padStart(2, "0")}</span>${canCancelEntry(entry) ? `<button class="danger cancel-entry" type="button" data-entry-id="${escapeHtml(entry.id)}" aria-label="Hủy ${escapeHtml(entry.drink)} của ${escapeHtml(entry.name)}" ${cancellingEntries.has(entry.id) ? "disabled" : ""}>${cancellingEntries.has(entry.id) ? "Đang hủy…" : "Hủy món"}</button>` : ""}</div></div>
       `).join("")}</div>`;
       $("entries-area").querySelectorAll(".cancel-entry").forEach(button => button.addEventListener("click", () => cancelEntry(button.dataset.entryId)));
+    }
+
+    const personKey = item => item.uid ? `uid:${item.uid}` : `name:${item.name}`;
+
+    function validPaymentImage(image) {
+      return typeof image === "string" && image.length <= 250000 && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(image);
+    }
+
+    function renderPaymentForm() {
+      if (!currentUser || appState?.adminUid !== currentUser.uid) {
+        $("summary-payment").hidden = true;
+        $("summary-payment").innerHTML = "";
+      }
+      const allowed = currentUser && appState?.adminUid === currentUser.uid && activeOrder?.open;
+      $("payment-section").hidden = !allowed;
+      const key = JSON.stringify([activeOrder?.id, activeOrder?.paymentQr || null]);
+      if (paymentDraftKey !== key) {
+        const oldOrderId = paymentDraftKey ? JSON.parse(paymentDraftKey)[0] : null;
+        if (oldOrderId !== activeOrder?.id) $("payment-section").open = false;
+        paymentDraftKey = key;
+        paymentImage = activeOrder?.paymentQr?.image || "";
+        $("payment-file").value = "";
+      }
+      $("payment-preview").hidden = !validPaymentImage(paymentImage);
+      if (validPaymentImage(paymentImage)) $("payment-preview").src = paymentImage;
+      else $("payment-preview").removeAttribute("src");
+      $("save-payment").disabled = paymentSaving || paymentLoading || !validPaymentImage(paymentImage);
+      $("remove-payment").disabled = paymentSaving || paymentLoading || !activeOrder?.paymentQr;
+      $("payment-status").textContent = paymentLoading ? "Đang xử lý ảnh…" : paymentSaving ? "Đang lưu…" : activeOrder?.paymentQr ? "Đã lưu QR cho đợt đặt này." : "Chưa có QR. Dán hoặc chọn ảnh rồi bấm Lưu QR trước khi chốt đơn.";
+    }
+
+    async function readPaymentImage(file) {
+      if (!file || !["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024) throw new Error("Chọn ảnh PNG, JPG hoặc WebP tối đa 5 MB.");
+      const source = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("Không đọc được ảnh QR."));
+        reader.readAsDataURL(file);
+      });
+      const image = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("Ảnh không hợp lệ. Hãy chọn ảnh QR khác."));
+        image.src = source;
+      });
+      const ratio = Math.min(1, 640 / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio));
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const result = canvas.toDataURL("image/png");
+      if (!validPaymentImage(result)) throw new Error("Ảnh quá nhiều chi tiết. Hãy cắt gọn ảnh chỉ còn mã QR rồi chọn lại.");
+      return result;
+    }
+
+    async function choosePaymentImage(event) {
+      return processPaymentImage(event.target.files[0]);
+    }
+
+    async function pastePaymentImage(event) {
+      const item = [...(event.clipboardData?.items || [])].find(item => item.kind === "file" && item.type.startsWith("image/"));
+      if (!item) {
+        if (event.target === $("payment-paste")) {
+          event.preventDefault();
+          showToast("Clipboard chưa có ảnh. Hãy copy ảnh QR rồi dán lại, hoặc chọn file ảnh.", true);
+        }
+        return;
+      }
+      event.preventDefault();
+      return processPaymentImage(item.getAsFile());
+    }
+
+    async function processPaymentImage(file) {
+      if (paymentLoading || paymentSaving) return;
+      if (!currentUser || appState?.adminUid !== currentUser.uid || !activeOrder?.open) return;
+      if (!file) return;
+      const orderId = activeOrder?.id;
+      paymentLoading = true;
+      renderPaymentForm();
+      try {
+        const image = await readPaymentImage(file);
+        if (activeOrder?.id === orderId && appState?.adminUid === currentUser?.uid) paymentImage = image;
+      } catch (error) { handleError(error); }
+      finally { paymentLoading = false; renderPaymentForm(); }
+    }
+
+    async function savePaymentQr(event, remove = false) {
+      event?.preventDefault();
+      if (paymentSaving || paymentLoading) return;
+      const orderId = appState?.activeOrderId;
+      if (!currentUser || appState?.adminUid !== currentUser.uid || !activeOrder?.open || !orderId) return showToast("Chỉ admin được thay QR khi đợt đặt còn mở.", true);
+      if (!remove && !validPaymentImage(paymentImage)) return showToast("Dán hoặc chọn ảnh QR hợp lệ trước khi lưu.", true);
+      // Empty legacy fields keep compatibility with existing deployed Rules.
+      const paymentQr = remove ? null : { image: paymentImage, recipient: "", note: "" };
+      paymentSaving = true;
+      renderPaymentForm();
+      try {
+        await runTransaction(db, async transaction => {
+          const orderRef = doc(db, "orders", orderId);
+          const [stateSnapshot, orderSnapshot] = await Promise.all([transaction.get(stateRef), transaction.get(orderRef)]);
+          if (!stateSnapshot.exists() || stateSnapshot.data().adminUid !== currentUser.uid || stateSnapshot.data().activeOrderId !== orderId || !orderSnapshot.exists() || !orderSnapshot.data().open) throw new Error("Đợt đặt đã chốt hoặc bạn không còn là admin.");
+          transaction.update(orderRef, { paymentQr });
+        });
+        showToast(remove ? "Đã bỏ QR nhận tiền." : "Đã lưu QR. Mọi người có thể xem trong tổng hợp đơn.");
+      } catch (error) { handleError(error); }
+      finally { paymentSaving = false; renderPaymentForm(); }
+    }
+
+    function calculateVoucher(items, voucher) {
+      const people = new Map();
+      const unknown = items.some(item => item.price == null);
+      let total = 0;
+      for (const item of items) {
+        const amount = Math.max(0, Math.round(item.price || 0));
+        total += amount;
+        const key = personKey(item);
+        if (!people.has(key)) people.set(key, { gross: 0, discount: 0, net: 0 });
+        people.get(key).gross += amount;
+      }
+      const value = Number(voucher?.value);
+      let discount = 0;
+      if (!unknown && total > 0 && Number.isFinite(value) && value > 0) {
+        if (voucher?.type === "percent") discount = Math.round(total * Math.min(value, 100) / 100);
+        else if (voucher?.type === "amount") discount = Math.round(value);
+        discount = Math.min(total, discount);
+      }
+      const shares = [...people.values()].map((person, index) => {
+        const exact = total ? discount * (person.gross / total) : 0;
+        person.discount = Math.floor(exact);
+        return { person, remainder: exact - person.discount, index };
+      });
+      let remaining = discount - shares.reduce((sum, share) => sum + share.person.discount, 0);
+      shares.sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+      for (const share of shares) if (remaining > 0 && share.person.discount < share.person.gross) { share.person.discount++; remaining--; }
+      for (const person of people.values()) person.net = person.gross - person.discount;
+      return { total, discount, net: total - discount, people, unknown };
+    }
+
+    function renderVoucherForm() {
+      const allowed = currentUser && appState?.adminUid === currentUser.uid && activeOrder?.open;
+      if (voucherRoundId !== activeOrder?.id) {
+        voucherRoundId = activeOrder?.id;
+        voucherExpanded = false;
+      }
+      if (!allowed) voucherExpanded = false;
+      $("voucher-section").hidden = !allowed;
+      $("voucher-form").hidden = !allowed || !voucherExpanded;
+      $("toggle-voucher").setAttribute("aria-expanded", String(Boolean(allowed && voucherExpanded)));
+      $("voucher-toggle-label").textContent = voucherExpanded ? "Thu gọn" : activeOrder?.voucher
+        ? `Đang giảm ${activeOrder.voucher.type === "percent" ? `${activeOrder.voucher.value}%` : money(activeOrder.voucher.value)}` : "Thêm voucher";
+      const key = JSON.stringify([activeOrder?.id, activeOrder?.voucher || null]);
+      if (key !== voucherDraftKey) {
+        voucherDraftKey = key;
+        $("voucher-type").value = activeOrder?.voucher?.type || "amount";
+        $("voucher-value").value = activeOrder?.voucher?.value ?? "";
+      }
+      $("save-voucher").disabled = voucherSaving;
+      $("remove-voucher").disabled = voucherSaving || !activeOrder?.voucher;
+      const bill = calculateVoucher(entries, activeOrder?.voucher);
+      $("voucher-status").textContent = bill.unknown ? "Có món chưa có giá: chưa thể tính voucher." : activeOrder?.voucher
+        ? `Đã áp dụng ${activeOrder.voucher.type === "percent" ? `${activeOrder.voucher.value}%` : money(activeOrder.voucher.value)} · Giảm thực tế ${money(bill.discount)}. Tự tính lại khi thêm/hủy món.` : "Chưa áp dụng voucher.";
+    }
+
+    async function saveVoucher(event, remove = false) {
+      event?.preventDefault();
+      if (voucherSaving) return;
+      const orderId = appState?.activeOrderId;
+      if (!currentUser || appState?.adminUid !== currentUser.uid || !activeOrder?.open || !orderId) return showToast("Chỉ admin được sửa voucher khi đợt đặt đang mở.", true);
+      const type = $("voucher-type").value;
+      const raw = $("voucher-value").value;
+      const value = Number(raw);
+      if (!remove && (!raw || !["amount", "percent"].includes(type) || !Number.isFinite(value) || value <= 0 || (type === "percent" ? value > 100 || Math.abs(value * 100 - Math.round(value * 100)) > 0.000001 : !Number.isSafeInteger(value) || value > 10000000000))) return showToast("Nhập số tiền nguyên dương hoặc phần trăm từ 0 đến 100 (tối đa 2 số lẻ).", true);
+      if (!remove && (entries.some(item => item.price == null) || !entries.some(item => item.price > 0))) return showToast("Cần có món đã đặt và đầy đủ giá trước khi áp dụng voucher.", true);
+      voucherSaving = true;
+      renderVoucherForm();
+      try {
+        await runTransaction(db, async transaction => {
+          const orderRef = doc(db, "orders", orderId);
+          const [stateSnapshot, orderSnapshot] = await Promise.all([transaction.get(stateRef), transaction.get(orderRef)]);
+          if (!stateSnapshot.exists() || stateSnapshot.data().adminUid !== currentUser.uid || stateSnapshot.data().activeOrderId !== orderId || !orderSnapshot.exists() || !orderSnapshot.data().open) throw new Error("Đợt đặt đã chốt hoặc bạn không còn là admin.");
+          transaction.update(orderRef, { voucher: remove ? null : { type, value } });
+        });
+        showToast(remove ? "Đã bỏ voucher." : "Đã áp dụng voucher cho cả nhóm.");
+      } catch (error) { handleError(error); }
+      finally { voucherSaving = false; renderVoucherForm(); }
     }
 
     function canCancelEntry(entry) {
@@ -570,7 +811,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
     }
 
     function render() {
-      const draft = Object.fromEntries(["order-note", "item-name", "item-price", "item-size", "item-category"].map(id => [id, $(id)?.value]));
+      const draft = Object.fromEntries(["item-name", "item-price", "item-size", "item-category"].map(id => [id, $(id)?.value]));
       renderOrderForm();
       renderEntries();
       renderAdmin();
@@ -592,14 +833,18 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
       return [...byDrink.entries()].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0], "vi"));
     }
 
-    function showSummaryContent(title, subtitle, items) {
+    function showSummaryContent(title, subtitle, items, voucher = null, paymentQr = null) {
       $("modal-title").textContent = title;
       $("modal-subtitle").textContent = subtitle;
+      const showPaymentQr = currentUser && appState?.adminUid === currentUser.uid && validPaymentImage(paymentQr?.image);
+      $("summary-payment").hidden = !showPaymentQr;
+      $("summary-payment").innerHTML = showPaymentQr ? `<img src="${paymentQr.image}" alt="QR chuyển khoản gom tiền" width="240" height="240">` : "";
       const summary = summarize(items);
       const people = new Map();
+      const bill = calculateVoucher(items, voucher);
       for (const item of items) {
-        const key = item.uid ? `uid:${item.uid}` : `name:${item.name}`;
-        if (!people.has(key)) people.set(key, { name: item.name, drinks: new Map() });
+        const key = personKey(item);
+        if (!people.has(key)) people.set(key, { name: item.name, key, drinks: new Map() });
         const drinks = people.get(key).drinks;
         const drinkKey = JSON.stringify([item.drink, item.size || "", item.price ?? null, item.note || ""]);
         if (!drinks.has(drinkKey)) drinks.set(drinkKey, { ...item, count: 0 });
@@ -613,11 +858,12 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
           const count = drinks.reduce((sum, item) => sum + item.count, 0);
           const total = drinks.reduce((sum, item) => sum + (item.price || 0) * item.count, 0);
           const unknown = drinks.some(item => item.price == null);
-          return `<details class="person-order" ${people.size <= 3 ? "open" : ""}><summary><span class="person-index">${String(index + 1).padStart(2, "0")}</span><span class="person-heading"><strong>${escapeHtml(person.name)}</strong><small>${count} món${unknown ? " · Có món chưa có giá" : ""}</small></span><span class="person-subtotal">${money(total)}${unknown ? " *" : ""}</span><span class="person-chevron" aria-hidden="true">⌄</span></summary><div class="person-order-items"><div class="person-table-head" aria-hidden="true"><span>Món / ghi chú</span><span>SL</span><span>Thành tiền</span></div>${drinks.map(item => `<div class="person-order-line"><div class="person-drink"><strong>${escapeHtml(item.drink)}</strong>${item.size ? `<span class="person-size">Size ${escapeHtml(item.size)}</span>` : ""}${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}${item.count > 1 ? `<small>${money(item.price)} / món</small>` : ""}</div><span class="person-quantity">×${item.count}</span><span class="person-line-price">${money(item.price == null ? null : item.price * item.count)}</span></div>`).join("")}</div></details>`;
+          const share = bill.people.get(person.key);
+          return `<details class="person-order" ${people.size <= 3 ? "open" : ""}><summary><span class="person-index">${String(index + 1).padStart(2, "0")}</span><span class="person-heading"><strong>${escapeHtml(person.name)}</strong><small>${count} món${unknown ? " · Có món chưa có giá" : ""}</small></span><span class="person-subtotal">${money(share.net)}${unknown ? " *" : ""}</span><span class="person-chevron" aria-hidden="true">⌄</span></summary><div class="person-order-items">${bill.discount ? `<div class="person-voucher"><span>Tiền món <b>${money(share.gross)}</b></span><span>Voucher <b>−${money(share.discount)}</b></span><span>Cần trả <b>${money(share.net)}</b></span></div>` : ""}${drinks.map(item => `<div class="person-order-line"><div class="person-drink"><strong>${escapeHtml(item.drink)}</strong>${item.size ? `<span class="person-size">Size ${escapeHtml(item.size)}</span>` : ""}${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}${item.count > 1 ? `<small>${money(item.price)} / món</small>` : ""}</div><span class="person-quantity">×${item.count}</span><span class="person-line-price">${money(item.price == null ? null : item.price * item.count)}</span></div>`).join("")}</div></details>`;
         }).join("")}</div>`
         : `<div class="empty-state"><div class="empty-icon">🧾</div><div class="empty-title">Đơn chưa có món</div></div>`;
-      $("modal-total").innerHTML = `<div><span>Tổng tiền cả nhóm</span><small>${items.some(item => item.price == null) ? "* Chưa gồm các món chưa có giá" : `${people.size} người · ${items.length} món`}</small></div><strong>${money(items.reduce((sum, item) => sum + (item.price || 0), 0))}</strong>`;
-      $("modal-content").scrollTop = 0;
+      $("modal-total").innerHTML = `<div><span>${bill.discount ? "Cả nhóm cần trả" : "Tổng tiền cả nhóm"}</span><small>${bill.discount ? `Tiền món ${money(bill.total)} · Voucher −${money(bill.discount)}` : `${people.size} người · ${items.length} món`}${bill.unknown ? " · * Chưa gồm món chưa có giá; chưa áp dụng voucher" : ""}</small>${bill.discount ? '<small>Giảm theo tỷ lệ tiền món · làm tròn đến đồng</small>' : ""}</div><strong>${money(bill.net)}</strong>`;
+      $("summary-scroll").scrollTop = 0;
       if (!$("summary-modal").open) $("summary-modal").showModal();
     }
 
@@ -626,7 +872,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
         const snapshot = await getDocs(collection(db, "orders", orderId, "entries"));
         const order = history.find((item) => item.id === orderId);
         const items = snapshot.docs.map((item) => item.data());
-        showSummaryContent("Tổng hợp đơn đã lưu", readableDate(order?.closedAt || order?.createdAt), items);
+        showSummaryContent("Tổng hợp đơn đã lưu", readableDate(order?.closedAt || order?.createdAt), items, order?.voucher, order?.paymentQr);
       } catch (error) {
         handleError(error);
       }
@@ -673,6 +919,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
         const imagePromise = (async () => {
         const renderer = await loadCaptureRenderer();
         if (document.fonts?.ready) await document.fonts.ready;
+        await Promise.all([...host.querySelectorAll("img")].map(image => image.decode()));
         const width = Math.ceil(host.getBoundingClientRect().width);
         const height = Math.ceil(host.scrollHeight);
         // Fit long orders into one PNG without exceeding canvas dimensions/area.
@@ -710,15 +957,22 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
     }
 
     async function submitOrder() {
+      if (orderSubmitting) return;
       const name = displayName();
-      const itemId = chosenItemId;
-      const note = $("order-note")?.value.trim() || "";
       if (!name) return showToast("Bạn hãy nhập tên trước nhé.", true);
-      if (!itemId) return showToast("Chọn một món trong menu để đặt nhé.", true);
+      const selection = [...orderCart].map(([id, item]) => ({ id, ...item, note: item.note.trim() }));
+      const quantity = cartQuantity();
+      if (!selection.length || quantity < 1 || quantity > MAX_ORDER_QUANTITY || selection.some(item => !Number.isInteger(item.quantity) || item.quantity < 1 || item.note.length > 300)) return showToast("Chọn món và nhập số lượng hợp lệ, tối đa 50 món mỗi lần.", true);
       const orderId = appState?.activeOrderId;
-      if (!orderId) return showToast("Đợt đặt vừa đóng. Hãy tải lại menu.", true);
+      if (!orderId || !currentUser) return showToast("Đợt đặt vừa đóng hoặc chưa kết nối. Hãy kiểm tra lại.", true);
+      const uid = currentUser.uid;
+      const menuAtClick = normalizeMenu(activeOrder?.menu);
+      const writes = selection.flatMap(item => Array.from({ length: item.quantity }, () => ({
+        selected: item, ref: doc(collection(db, "orders", orderId, "entries"))
+      })));
+      orderSubmitting = true;
+      renderOrderForm();
       try {
-        const entryRef = doc(collection(db, "orders", orderId, "entries"));
         await runTransaction(db, async (transaction) => {
           const [stateSnapshot, orderSnapshot] = await Promise.all([
             transaction.get(stateRef),
@@ -728,16 +982,19 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
               !orderSnapshot.exists() || !orderSnapshot.data().open) {
             throw new Error("Đợt đặt đã kết thúc. Vui lòng kiểm tra đơn hiện tại.");
           }
-          const item = normalizeMenu(orderSnapshot.data().menu).find(item => item.id === itemId);
-          if (!item) {
-            throw new Error("Món này không còn trong menu. Vui lòng chọn lại.");
+          const currentMenu = normalizeMenu(orderSnapshot.data().menu);
+          for (const { selected, ref } of writes) {
+            const item = currentMenu.find(item => item.id === selected.id);
+            const original = menuAtClick.find(item => item.id === selected.id);
+            if (!item || !original || item.price !== original.price || item.name !== original.name || (item.size || "") !== (original.size || "")) throw new Error("Menu hoặc giá món đã thay đổi. Hãy kiểm tra lại trước khi thêm vào đơn.");
+            transaction.set(ref, { uid, name, drink: item.name, size: item.size || "", price: item.price, note: selected.note, createdAt: serverTimestamp() });
           }
-          transaction.set(entryRef, { uid: currentUser.uid, name, drink: item.name, size: item.size || "", price: item.price, note, createdAt: serverTimestamp() });
         });
-        showToast("Đã thêm món vào đơn!");
+        if (appState?.activeOrderId === orderId) orderCart.clear();
+        showToast(`Đã thêm ${quantity} món vào đơn!`);
       } catch (error) {
         handleError(error);
-      }
+      } finally { orderSubmitting = false; renderOrderForm(); }
     }
 
     async function claimAdmin() {
@@ -940,6 +1197,21 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
       } catch (error) { handleError(error); }
     }
 
+    $("voucher-form").addEventListener("submit", saveVoucher);
+    $("payment-file").addEventListener("change", choosePaymentImage);
+    $("payment-form").addEventListener("paste", pastePaymentImage);
+    $("payment-form").addEventListener("submit", savePaymentQr);
+    $("remove-payment").addEventListener("click", () => savePaymentQr(null, true));
+    $("toggle-voucher").addEventListener("click", () => {
+      voucherExpanded = !voucherExpanded;
+      renderVoucherForm();
+    });
+    $("remove-voucher").addEventListener("click", () => saveVoucher(null, true));
+    $("voucher-type").addEventListener("change", () => {
+      const percent = $("voucher-type").value === "percent";
+      $("voucher-value").step = percent ? "0.01" : "1";
+      $("voucher-value").placeholder = percent ? "Ví dụ: 20" : "Ví dụ: 30000";
+    });
     $("close-order").addEventListener("click", closeOrder);
     $("open-order-dialog").addEventListener("click", () => {
       $("order-name").value = displayName();
@@ -955,7 +1227,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/fireba
       });
     }
     $("summary-button").addEventListener("click", () => {
-      showSummaryContent("Tổng hợp đơn hiện tại", `${entries.length} món · ${readableDate(activeOrder?.createdAt)}`, entries);
+      showSummaryContent("Tổng hợp đơn hiện tại", `${entries.length} món · ${readableDate(activeOrder?.createdAt)}`, entries, activeOrder?.voucher, activeOrder?.paymentQr);
     });
     $("capture-summary").addEventListener("click", captureSummary);
     $("expand-summary").addEventListener("click", () => $("modal-content").querySelectorAll("details").forEach(details => { details.open = true; }));

@@ -1,0 +1,22 @@
+// Add inside match /databases/{database}/documents { ... }.
+// Only the current admin can set/remove the payment QR on the open round.
+// Keep existing scoped rules. Broad allow write: if true bypasses this check.
+
+match /orders/{orderId} {
+  allow update: if request.auth != null
+    && get(/databases/$(database)/documents/app/state).data.adminUid == request.auth.uid
+    && get(/databases/$(database)/documents/app/state).data.activeOrderId == orderId
+    && resource.data.open == true
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentQr'])
+    && (request.resource.data.paymentQr == null
+      || (request.resource.data.paymentQr is map
+        && request.resource.data.paymentQr.keys().hasAll(['image', 'recipient', 'note'])
+        && request.resource.data.paymentQr.keys().hasOnly(['image', 'recipient', 'note'])
+        && request.resource.data.paymentQr.image is string
+        && request.resource.data.paymentQr.image.size() <= 250000
+        && request.resource.data.paymentQr.image.matches('data:image/png;base64,[A-Za-z0-9+/]+={0,2}')
+        && request.resource.data.paymentQr.recipient is string
+        && request.resource.data.paymentQr.recipient.size() <= 100
+        && request.resource.data.paymentQr.note is string
+        && request.resource.data.paymentQr.note.size() <= 150));
+}

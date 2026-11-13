@@ -57,7 +57,27 @@
             <div class="entry-actions"><button class="secondary" id="summary-button" type="button" disabled>▤ Tổng hợp</button><button class="primary" id="close-order" type="button" hidden>✓ Chốt đơn</button></div>
           </div>
           <div id="entries-area"></div>
+          <div id="voucher-section" class="voucher-section" hidden>
+          <button id="toggle-voucher" class="voucher-toggle" type="button" aria-expanded="false" aria-controls="voucher-form"><span>🎟 Voucher của quán</span><span id="voucher-toggle-label">Thêm voucher</span><span class="voucher-chevron" aria-hidden="true">⌄</span></button>
+          <form id="voucher-form" class="voucher-form" hidden novalidate>
+            <div><strong>🎟 Voucher của quán</strong><p>Chia giảm giá theo tỷ lệ tiền món mỗi người đặt.</p></div>
+            <div class="voucher-inputs"><div class="field"><label for="voucher-type">Kiểu giảm</label><select id="voucher-type" class="control"><option value="amount">Giảm số tiền (đồng)</option><option value="percent">Giảm phần trăm (%)</option></select></div><div class="field"><label for="voucher-value">Mức giảm</label><input id="voucher-value" class="control" type="number" min="0" step="1" placeholder="Ví dụ: 30000"></div></div>
+            <div class="toolbar"><button id="save-voucher" class="secondary" type="submit">Áp dụng voucher</button><button id="remove-voucher" class="text-button" type="button">Bỏ voucher</button></div>
+            <p id="voucher-status" class="card-subtitle" role="status"></p>
+          </form>
+          </div>
           <div id="entries-total" class="order-total" hidden></div>
+          <details id="payment-section" class="payment-settings" hidden>
+            <summary>▦ QR gom tiền <span>Thêm / đổi ảnh QR</span></summary>
+            <form id="payment-form" class="payment-form" novalidate>
+              <div id="payment-paste" class="payment-paste" tabindex="0" role="group" aria-label="Vùng dán ảnh QR. Bấm vào đây rồi nhấn Ctrl+V hoặc Command+V"><strong>▦ Dán ảnh QR</strong><span>Bấm vào đây rồi nhấn Ctrl+V / ⌘V</span></div>
+              <p class="card-subtitle">Hoặc chọn ảnh bên dưới. Bấm Lưu QR để dùng ảnh trong tổng hợp và ảnh copy.</p>
+              <div class="field"><label for="payment-file">Ảnh QR (PNG, JPG, WebP · tối đa 5 MB)</label><input id="payment-file" class="control" type="file" accept="image/png,image/jpeg,image/webp"></div>
+              <img id="payment-preview" class="payment-preview" alt="Ảnh QR nhận tiền đã chọn" hidden>
+              <div class="toolbar"><button id="save-payment" class="secondary" type="submit">Lưu QR</button><button id="remove-payment" class="text-button" type="button">Bỏ QR</button></div>
+              <p id="payment-status" class="card-subtitle" role="status"></p>
+            </form>
+          </details>
         </section>
       </div>
 
@@ -103,8 +123,11 @@
         <div class="summary-head-actions"><button id="capture-summary" class="secondary" type="button" title="Copy ảnh toàn bộ form vào clipboard">▣ Chụp hình</button><button class="close-modal" id="close-modal" type="button" aria-label="Đóng">×</button></div>
       </div>
       <div id="summary-tools" class="summary-tools"><span id="summary-overview"></span><div><button id="expand-summary" class="text-button" type="button">Mở tất cả</button><button id="collapse-summary" class="text-button" type="button">Thu gọn</button></div></div>
-      <div id="modal-content" class="summary-scroll" tabindex="0" aria-label="Danh sách món theo người đặt"></div>
+      <div id="summary-scroll" class="summary-scroll" tabindex="0" aria-label="Danh sách món và tổng tiền theo người đặt">
+      <div id="modal-content"></div>
       <div id="modal-total" class="summary-footer"></div>
+      <div id="summary-payment" class="summary-payment" hidden></div>
+      </div>
     </div>
   </dialog>
   <dialog id="action-dialog" class="action-dialog" aria-labelledby="action-title" aria-describedby="action-description">
