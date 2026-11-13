@@ -1,0 +1,65 @@
+// BO SUNG vao ben trong: match /databases/{database}/documents { ... }
+// Giu nguyen cac Rules hien co. Khong thay the toan bo Rules bang file nay.
+// Chi admin hien tai duoc mo/dong dot dat va cap nhat menu dot dang mo.
+// Khong cap them quyen doc, dat mon, nhan/chuyen admin hay xoa du lieu.
+
+match /app/state {
+  // Open a round: only activeOrderId changes; the new order must be created
+  // in the same transaction, owned by the current admin.
+  allow update: if request.auth != null
+    && resource.data.adminUid == request.auth.uid
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activeOrderId'])
+    && resource.data.activeOrderId == null
+    && request.resource.data.activeOrderId is string
+    && !exists(/databases/$(database)/documents/orders/$(request.resource.data.activeOrderId))
+    && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.activeOrderId)).data.ownerUid == request.auth.uid
+    && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.activeOrderId)).data.open == true;
+
+  // Close a round together with its order document.
+  allow update: if request.auth != null
+    && resource.data.adminUid == request.auth.uid
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activeOrderId'])
+    && resource.data.activeOrderId is string
+    && request.resource.data.activeOrderId == null
+    && get(/databases/$(database)/documents/orders/$(resource.data.activeOrderId)).data.open == true
+    && getAfter(/databases/$(database)/documents/orders/$(resource.data.activeOrderId)).data.open == false
+    && getAfter(/databases/$(database)/documents/orders/$(resource.data.activeOrderId)).data.closedAt == request.time;
+}
+
+match /orders/{orderId} {
+  allow create: if request.auth != null
+    && get(/databases/$(database)/documents/app/state).data.adminUid == request.auth.uid
+    && get(/databases/$(database)/documents/app/state).data.activeOrderId == null
+    && getAfter(/databases/$(database)/documents/app/state).data.activeOrderId == orderId
+    && request.resource.data.keys().hasAll(['ownerUid', 'ownerName', 'shopId', 'shopName', 'menu', 'open', 'createdAt', 'closedAt'])
+    && request.resource.data.keys().hasOnly(['ownerUid', 'ownerName', 'shopId', 'shopName', 'menu', 'open', 'createdAt', 'closedAt'])
+    && request.resource.data.ownerUid == request.auth.uid
+    && request.resource.data.ownerName is string
+    && request.resource.data.ownerName.size() > 0
+    && request.resource.data.ownerName.size() <= 60
+    && request.resource.data.shopId is string
+    && request.resource.data.shopName is string
+    && request.resource.data.menu is list
+    && request.resource.data.menu.size() <= 100
+    && request.resource.data.open == true
+    && request.resource.data.createdAt == request.time
+    && request.resource.data.closedAt == null;
+
+  // Update the menu for the active round (including Excel imports).
+  allow update: if request.auth != null
+    && get(/databases/$(database)/documents/app/state).data.adminUid == request.auth.uid
+    && get(/databases/$(database)/documents/app/state).data.activeOrderId == orderId
+    && resource.data.open == true
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['menu'])
+    && request.resource.data.menu is list
+    && request.resource.data.menu.size() <= 100;
+
+  allow update: if request.auth != null
+    && get(/databases/$(database)/documents/app/state).data.adminUid == request.auth.uid
+    && get(/databases/$(database)/documents/app/state).data.activeOrderId == orderId
+    && resource.data.open == true
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['open', 'closedAt'])
+    && request.resource.data.open == false
+    && request.resource.data.closedAt == request.time
+    && getAfter(/databases/$(database)/documents/app/state).data.activeOrderId == null;
+}

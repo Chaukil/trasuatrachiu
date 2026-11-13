@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7fb">
+  <title>Trà Chiu — Đặt nước cùng nhau</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">🧋</div>
+        <div>
+          <div class="brand-name">Trà Chiu</div>
+          <div class="brand-caption">Đặt nước cùng nhau, thật gọn</div>
+        </div>
+      </div>
+      <div class="live-pill"><span class="live-dot"></span><span id="connection-label">Đang kết nối...</span></div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <div class="eyebrow">Tea time, team time</div>
+        <h1>Một ly bạn thích,<br>cả nhóm cùng vui.</h1>
+        <p>Chọn món trong menu của đợt đặt hiện tại. Đơn hàng và danh sách món được cập nhật tức thì cho mọi người.</p>
+      </div>
+      <div class="hero-art" aria-hidden="true">🍵</div>
+    </section>
+
+    <div class="identity-strip">
+      <div><div class="identity-label">Tên hiển thị của bạn</div><div class="identity-help">Không cần đăng nhập. Bấm Lưu tên để nhớ trên trình duyệt này.</div></div>
+      <input id="name-input" class="control identity-input" maxlength="60" placeholder="Ví dụ: Minh Anh" autocomplete="name"><button id="save-name" class="primary" type="button">Lưu tên</button>
+    </div>
+
+    <div id="error-banner" class="error-banner" role="alert"></div>
+    <main class="main-grid">
+      <div class="left-column">
+        <section class="card card-pad">
+          <div class="card-head">
+            <div>
+              <h2 class="card-title">Đặt món của bạn</h2>
+              <p class="card-subtitle" id="order-status">Đang tải đợt đặt...</p>
+            </div>
+            <span class="tag gray" id="round-tag">Đang tải</span>
+          </div>
+          <div class="order-launch"><div><strong>Menu của quán, dễ chọn hơn</strong><p>Xem danh mục, chọn size và ghi chú trong cửa sổ đặt món.</p></div><button id="open-order-dialog" class="primary" type="button" disabled>🍵 Mở menu & đặt món</button></div>
+        </section>
+
+        <section class="card card-pad">
+          <div class="card-head">
+            <div>
+              <h2 class="card-title">Đơn hiện tại</h2>
+              <p class="card-subtitle" id="entry-count">Danh sách sẽ hiện ở đây</p>
+            </div>
+            <div class="entry-actions"><button class="secondary" id="summary-button" type="button" disabled>▤ Tổng hợp</button><button class="primary" id="close-order" type="button" hidden>✓ Chốt đơn</button></div>
+          </div>
+          <div id="entries-area"></div>
+          <div id="entries-total" class="order-total" hidden></div>
+        </section>
+      </div>
+
+      <div class="right-column">
+        <section class="card card-pad">
+          <div class="card-head">
+            <div>
+              <h2 class="card-title">Quản lý đợt đặt</h2>
+              <p class="card-subtitle">Một admin điều phối menu và đơn chung.</p>
+            </div>
+            <span class="tag gray" id="admin-tag">Chưa có admin</span>
+          </div>
+          <div id="admin-area" class="admin-content"></div>
+        </section>
+
+        <section class="card card-pad">
+          <div class="card-head">
+            <div>
+              <h2 class="card-title">Lịch sử đơn</h2>
+              <p class="card-subtitle">Các đợt đã kết thúc được lưu tại đây.</p>
+            </div>
+            <span class="tag gray" id="history-count">0 đợt</span>
+          </div>
+          <div id="history-area"></div>
+        </section>
+      </div>
+    </main>
+    <div class="footer-note">Đơn được đồng bộ trực tiếp · Tên lưu trên trình duyệt · Phiên ẩn danh sẽ quên tên khi đóng</div>
+  </div>
+
+  <dialog id="order-dialog" class="workspace-dialog" aria-labelledby="order-dialog-title">
+    <div class="workspace-dialog-head"><div><span class="eyebrow">CHỌN MỘT LY BẠN THÍCH</span><h2 id="order-dialog-title">Đặt món của bạn</h2></div><button class="close-modal" type="button" data-close-dialog="order-dialog" aria-label="Đóng đặt món">×</button></div>
+    <div class="workspace-dialog-body"><div class="field order-name-field"><label for="order-name">Tên người đặt</label><input id="order-name" class="control" maxlength="60" autocomplete="name" placeholder="Nhập tên của bạn"></div><div id="order-form-area"></div></div>
+  </dialog>
+  <dialog id="menu-dialog" class="workspace-dialog menu-workspace" aria-labelledby="menu-dialog-title">
+    <div class="workspace-dialog-head"><div><span class="eyebrow">QUẢN LÝ MENU QUÁN</span><h2 id="menu-dialog-title">Nhập món vào menu</h2></div><button class="close-modal" type="button" data-close-dialog="menu-dialog" aria-label="Đóng nhập menu">×</button></div>
+    <div id="menu-dialog-area" class="workspace-dialog-body"></div>
+  </dialog>
+  <dialog id="summary-modal" class="summary-dialog" aria-labelledby="modal-title">
+    <div class="modal">
+      <div class="modal-head">
+        <div><h2 id="modal-title">Tổng hợp đơn</h2><p id="modal-subtitle"></p></div>
+        <div class="summary-head-actions"><button id="capture-summary" class="secondary" type="button" title="Copy ảnh toàn bộ form vào clipboard">▣ Chụp hình</button><button class="close-modal" id="close-modal" type="button" aria-label="Đóng">×</button></div>
+      </div>
+      <div id="summary-tools" class="summary-tools"><span id="summary-overview"></span><div><button id="expand-summary" class="text-button" type="button">Mở tất cả</button><button id="collapse-summary" class="text-button" type="button">Thu gọn</button></div></div>
+      <div id="modal-content" class="summary-scroll" tabindex="0" aria-label="Danh sách món theo người đặt"></div>
+      <div id="modal-total" class="summary-footer"></div>
+    </div>
+  </dialog>
+  <dialog id="action-dialog" class="action-dialog" aria-labelledby="action-title" aria-describedby="action-description">
+    <form id="action-form" novalidate>
+      <div class="dialog-top"><span id="action-icon" class="dialog-icon" aria-hidden="true">✦</span><button id="action-close" class="close-modal" type="button" aria-label="Đóng">×</button></div>
+      <h2 id="action-title"></h2>
+      <p id="action-description"></p>
+      <div id="action-field" class="field"><label for="action-input">Tên quán</label><input id="action-input" class="control" maxlength="100" autocomplete="off"><span id="action-error" class="field-error" role="alert"></span></div>
+      <div class="dialog-actions"><button id="action-cancel" class="secondary" type="button">Để sau</button><button id="action-submit" class="primary" type="submit">Xác nhận</button></div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" popover="manual" role="status" aria-live="polite"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

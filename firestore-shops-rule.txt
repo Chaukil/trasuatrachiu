@@ -1,0 +1,8 @@
+// Add this rule INSIDE the existing match /app/state { ... } block.
+// Keep the existing rules for reading, orders, entries and admin requests.
+// This adds only the missing permission to update the shops field.
+
+allow update: if request.auth != null
+  && resource.data.adminUid == request.auth.uid
+  && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['shops'])
+  && request.resource.data.shops is list;

@@ -1,0 +1,13 @@
+// Add inside match /databases/{database}/documents { ... }.
+// Keep other scoped rules. Remove any broad allow write: if true rule:
+// Firestore combines matching allow rules with OR, so an open rule would
+// bypass the owner/admin checks below.
+// Also remove any broader allow delete/write on entries before using this.
+
+match /orders/{orderId}/entries/{entryId} {
+  allow delete: if request.auth != null
+    && get(/databases/$(database)/documents/app/state).data.activeOrderId == orderId
+    && get(/databases/$(database)/documents/orders/$(orderId)).data.open == true
+    && (resource.data.uid == request.auth.uid
+      || get(/databases/$(database)/documents/app/state).data.adminUid == request.auth.uid);
+}
